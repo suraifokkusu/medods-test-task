@@ -1,0 +1,81 @@
+services:
+  db:
+    image: postgres:13-alpine
+    container_name: medods-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate:v4.15.2
+    command: -path=/migrations -database postgres://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT}/${DB_NAME}?sslmode=disable up
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
+    restart: "no"
+
+  app:
+    build: .
+    container_name: medods-app
+    restart: always
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      SECRET_KEY: ${SECRET_KEY}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_started
+    command: ["./authservice"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: medods-test
+    environment:
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - .:/app
+    working_dir: /app
+    entrypoint: ["sh", "-c", "go test ./... && exit 0"]
+    restart: "no"
+
+volumes:
+  db-data:
